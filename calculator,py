@@ -1,0 +1,175 @@
+import json
+import yaml
+import argparse
+from typing import List, Dict
+
+class CostEstimator:
+    def __init__(self, sbom_file: str, developer_rate: float, proprietary_alternatives: Dict[str, float], developers: int):
+        """
+        Initializes the cost estimator.
+        
+        :param sbom_file: Path to the SBOM file (JSON or YAML).
+        :param developer_rate: Hourly rate of developers.
+        :param proprietary_alternatives: A dictionary mapping OSS components to their proprietary alternatives cost.
+        :param developers: The number of developers available for building.
+        """
+        self.sbom_file = sbom_file
+        self.developer_rate = developer_rate
+        self.proprietary_alternatives = proprietary_alternatives
+        self.developers = developers
+        self.components = self.load_sbom()
+
+    def load_sbom(self) -> List[Dict]:
+        """Load SBOM from a JSON or YAML file."""
+        if self.sbom_file.endswith('.json'):
+            with open(self.sbom_file, 'r') as f:
+                return json.load(f).get('components', [])
+        elif self.sbom_file.endswith('.yaml') or self.sbom_file.endswith('.yml'):
+            with open(self.sbom_file, 'r') as f:
+                return yaml.safe_load(f).get('components', [])
+        else:
+            raise ValueError("Unsupported SBOM format. Please provide JSON or YAML.")
+
+    def calculate_development_cost_avoidance(self, dev_hours: int) -> float:
+        """
+        Calculate the development cost avoidance.
+        
+        :param dev_hours: Estimated hours to build the component.
+        :return: The avoided development cost.
+        """
+        return dev_hours * self.developer_rate
+
+    def calculate_license_cost_avoidance(self, component_name: str) -> float:
+        """
+        Calculate the license cost avoidance based on proprietary alternative.
+        
+        :param component_name: The name of the OSS component.
+        :return: The avoided licensing cost.
+        """
+        return self.proprietary_alternatives.get(component_name, 0.0)
+
+    def estimate_development_effort(self, dev_hours: int) -> Dict[str, float]:
+        """
+        Estimate the developer time and effort (in months/years and headcount) to build the component.
+
+        :param dev_hours: Estimated hours to build the component.
+        :return: A dictionary with the headcount and time (in months).
+        """
+        # Calculate the total time required with the given number of developers
+        total_developer_time = dev_hours / self.developers  # Hours per developer
+        months_required = total_developer_time / 160  # 160 work hours per month per developer
+
+        return {
+            "total_hours": dev_hours,
+            "headcount": self.developers,
+            "months_required": months_required,
+            "years_required": months_required / 12
+        }
+
+    def estimate_cost_savings(self) -> Dict:
+        """
+        Estimate the total cost savings and developer time effort for all components in the SBOM.
+        
+        :return: A dictionary summarizing cost savings and developer effort.
+        """
+        total_dev_cost_avoidance = 0.0
+        total_license_cost_avoidance = 0.0
+
+        dev_effort_summary = []
+
+        for component in self.components:
+            name = component.get('name')
+            
+            # Simulate the development hours needed for each component (you can adjust this logic as needed)
+            dev_hours = 1000  # This is a placeholder; you can add logic to adjust per component
+            
+            # Calculate development cost avoidance
+            dev_cost = self.calculate_development_cost_avoidance(dev_hours)
+            total_dev_cost_avoidance += dev_cost
+
+            # Calculate license cost avoidance
+            license_cost = self.calculate_license_cost_avoidance(name)
+            total_license_cost_avoidance += license_cost
+
+            # Estimate the developer time and effort
+            dev_effort = self.estimate_development_effort(dev_hours)
+
+            # Store the component effort for reporting
+            dev_effort_summary.append({
+                "component": name,
+                "dev_cost_avoided": dev_cost,
+                "license_cost_avoided": license_cost,
+                "effort": dev_effort
+            })
+
+            print(f"Component: {name}, Dev Hours: {dev_hours}, Dev Cost Avoided: ${dev_cost:.2f}, License Cost Avoided: ${license_cost:.2f}")
+            print(f"  -> Headcount: {dev_effort['headcount']}, Months Required: {dev_effort['months_required']:.2f}, Years Required: {dev_effort['years_required']:.2f}")
+
+        total_savings = total_dev_cost_avoidance + total_license_cost_avoidance
+        return {
+            "total_dev_cost_avoidance": total_dev_cost_avoidance,
+            "total_license_cost_avoidance": total_license_cost_avoidance,
+            "total_savings": total_savings,
+            "developer_effort": dev_effort_summary
+        }
+
+    def generate_report(self):
+        """Generate a summary report of the cost savings and developer effort."""
+        savings = self.estimate_cost_savings()
+        print("\n===== Cost Savings Report =====")
+        print(f"Total Development Cost Avoidance: ${savings['total_dev_cost_avoidance']:.2f}")
+        print(f"Total Licensing Cost Avoidance: ${savings['total_license_cost_avoidance']:.2f}")
+        print(f"Total Estimated Cost Savings: ${savings['total_savings']:.2f}")
+
+        print("\n===== Developer Effort Report =====")
+        for effort in savings["developer_effort"]:
+            print(f"Component: {effort['component']}")
+            print(f"  Dev Cost Avoided: ${effort['dev_cost_avoided']:.2f}")
+            print(f"  License Cost Avoided: ${effort['license_cost_avoided']:.2f}")
+            print(f"  Headcount: {effort['effort']['headcount']}")
+            print(f"  Time Required: {effort['effort']['months_required']:.2f} months / {effort['effort']['years_required']:.2f} years")
+            print("")
+
+
+def parse_arguments():
+    """
+    Parse command-line arguments using argparse.
+    """
+    parser = argparse.ArgumentParser(description="Calculate cost savings and developer effort from using OSS components based on an SBOM.")
+    parser.add_argument('sbom', type=str, help="Path to the SBOM file (JSON or YAML).")
+    parser.add_argument('--rate', type=float, default=50.0, help="Developer hourly rate (default: 50.0).")
+    parser.add_argument('--alternatives', type=str, help="Path to the JSON file with proprietary alternatives cost (default: empty).")
+    parser.add_argument('--developers', type=int, default=2, help="Number of developers assigned to work (default: 2).")
+    
+    return parser.parse_args()
+
+
+def load_proprietary_alternatives(file_path: str) -> Dict[str, float]:
+    """
+    Load proprietary alternatives cost from a JSON file.
+    
+    :param file_path: Path to the JSON file containing proprietary alternatives and their cost.
+    :return: A dictionary mapping OSS components to proprietary software cost.
+    """
+    if file_path:
+        with open(file_path, 'r') as f:
+            return json.load(f)
+    return {}
+
+
+def main():
+    # Parse CLI arguments
+    args = parse_arguments()
+    
+    # Load proprietary alternatives cost if provided
+    proprietary_alternatives = load_proprietary_alternatives(args.alternatives)
+    
+    # Create the cost estimator
+    estimator = CostEstimator(sbom_file=args.sbom, developer_rate=args.rate, proprietary_alternatives=proprietary_alternatives, developers=args.developers)
+    
+    # Generate the report
+    estimator.generate_report()
+
+
+if __name__ == "__main__":
+    main()
